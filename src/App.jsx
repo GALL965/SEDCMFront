@@ -4,7 +4,8 @@ import RackList from './components/RackList'
 import RackDetail from './components/RackDetail'
 import ZoneControls from './components/ZoneControls'
 import LogsPanel from './components/LogsPanel'
-import { getHealth } from './services/api'
+import { getHealth, getInventory } from './services/api'
+import { mapInventoryToZones } from './services/inventoryAdapter'
 
 function rand(min, max) { return Math.round(Math.random() * (max - min) + min) }
 function randFloat(min, max, digits=1){ return Number((Math.random() * (max-min) + min).toFixed(digits)) }
@@ -49,17 +50,36 @@ export default function App(){
   const [zoneControls, setZoneControls] = useState(() => Object.fromEntries([0,1,2].map(i=>[`zone-${i}`, { hvac:50, extractor:50 }])) )
   const [logs, setLogs] = useState([])
   const [backendStatus, setBackendStatus] = useState('checking')
+  const [inventorySource, setInventorySource] = useState('mock')
 
   useEffect(()=>{
     let cancelled = false
 
-    getHealth()
-      .then(()=>{
-        if(!cancelled) setBackendStatus('connected')
-      })
-      .catch(()=>{
-        if(!cancelled) setBackendStatus('disconnected')
-      })
+    async function loadBackendInventory(){
+      try {
+        await getHealth()
+        if(cancelled) return
+
+        setBackendStatus('connected')
+
+        try {
+          const inventory = await getInventory()
+          if(cancelled) return
+
+          setZones(mapInventoryToZones(inventory, generateMetrics))
+          setInventorySource('backend')
+        } catch {
+          if(!cancelled) setInventorySource('mock')
+        }
+      } catch {
+        if(!cancelled) {
+          setBackendStatus('disconnected')
+          setInventorySource('mock')
+        }
+      }
+    }
+
+    loadBackendInventory()
 
     return ()=>{
       cancelled = true
@@ -137,9 +157,14 @@ export default function App(){
     <div className="app-root">
       <header className="topbar">
         <h1>SEDCM — Monitor Datacenter</h1>
-        <div className={`backend-status backend-status-${backendStatus}`}>
-          <span className="backend-status-dot" aria-hidden="true" />
-          Backend: {backendStatus === 'connected' ? 'conectado' : backendStatus === 'disconnected' ? 'desconectado' : 'verificando'}
+        <div className="topbar-status">
+          <div className={`backend-status backend-status-${backendStatus}`}>
+            <span className="backend-status-dot" aria-hidden="true" />
+            Backend: {backendStatus === 'connected' ? 'conectado' : backendStatus === 'disconnected' ? 'desconectado' : 'verificando'}
+          </div>
+          <div className={`data-status data-status-${inventorySource}`}>
+            Datos: {inventorySource === 'backend' ? 'backend' : 'mock'}
+          </div>
         </div>
       </header>
       <div className="container">

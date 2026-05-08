@@ -39,3 +39,7 @@ export async function fetchJson(path, options = {}) {
 export function getHealth() {
   return fetchJson('/health')
 }
+
+export function getInventory() {
+  return fetchJson('/api/v1/inventory')
+}
