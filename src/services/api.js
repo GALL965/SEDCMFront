@@ -2,6 +2,19 @@ const DEFAULT_API_BASE_URL = 'http://127.0.0.1:3000'
 
 const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL || DEFAULT_API_BASE_URL).replace(/\/$/, '')
 
+function buildQuery(params = {}) {
+  const query = new URLSearchParams()
+
+  Object.entries(params).forEach(([key, value]) => {
+    if (value !== undefined && value !== null && value !== '') {
+      query.set(key, value)
+    }
+  })
+
+  const qs = query.toString()
+  return qs ? `?${qs}` : ''
+}
+
 export async function fetchJson(path, options = {}) {
   const normalizedPath = path.startsWith('/') ? path : `/${path}`
   const url = `${API_BASE_URL}${normalizedPath}`
@@ -42,4 +55,16 @@ export function getHealth() {
 
 export function getInventory() {
   return fetchJson('/api/v1/inventory')
+}
+
+export function getNodeTelemetry(params = {}) {
+  return fetchJson(`/api/v1/telemetry/node${buildQuery({ limit: 50, ...params })}`)
+}
+
+export function getEnvironmentTelemetry(params = {}) {
+  return fetchJson(`/api/v1/telemetry/environment${buildQuery({ limit: 50, ...params })}`)
+}
+
+export function getAuditCommands(params = {}) {
+  return fetchJson(`/api/v1/audit/commands${buildQuery({ limit: 50, ...params })}`)
 }

@@ -11,6 +11,11 @@ const METRICS = [
   { key: 'power', label: 'Consumo' }
 ]
 
+function formatRam(server){
+  const unit = server.metricUnits && server.metricUnits.ram === 'MB' ? 'MB' : '%'
+  return `${server.metrics.ram}${unit}`
+}
+
 export default function RackDetail({ rack, onBack }){
   const [metric, setMetric] = useState('cpu');
   const [expandedServer, setExpandedServer] = useState(null);
@@ -46,7 +51,7 @@ export default function RackDetail({ rack, onBack }){
             </div>
             <div className="server-metrics">
               <div><span className="label">CPU</span><strong>{s.metrics.cpu}%</strong></div>
-              <div><span className="label">RAM</span><strong>{s.metrics.ram}%</strong></div>
+              <div><span className="label">RAM</span><strong>{formatRam(s)}</strong></div>
               <div><span className="label">Temp</span><strong>{s.metrics.temp}°C</strong></div>
               <div><span className="label">Humedad</span><strong>{s.metrics.humidity}%</strong></div>
               <div><span className="label">Red</span><strong>{s.metrics.net} Mbps</strong></div>

@@ -4,8 +4,16 @@ import RackList from './components/RackList'
 import RackDetail from './components/RackDetail'
 import ZoneControls from './components/ZoneControls'
 import LogsPanel from './components/LogsPanel'
-import { getHealth, getInventory } from './services/api'
+import {
+  getAuditCommands,
+  getEnvironmentTelemetry,
+  getHealth,
+  getInventory,
+  getNodeTelemetry
+} from './services/api'
+import { mapAuditCommandsToLogs } from './services/auditAdapter'
 import { mapInventoryToZones } from './services/inventoryAdapter'
+import { mapTelemetryToMetricsHistory } from './services/telemetryAdapter'
 
 function rand(min, max) { return Math.round(Math.random() * (max - min) + min) }
 function randFloat(min, max, digits=1){ return Number((Math.random() * (max-min) + min).toFixed(digits)) }
@@ -51,6 +59,8 @@ export default function App(){
   const [logs, setLogs] = useState([])
   const [backendStatus, setBackendStatus] = useState('checking')
   const [inventorySource, setInventorySource] = useState('mock')
+  const activeZone = selectedZone ? zones.find(z=>z.id===selectedZone.id) : null
+  const activeRack = selectedRack && activeZone ? activeZone.racks.find(r=>r.id===selectedRack.id) : null
 
   useEffect(()=>{
     let cancelled = false
@@ -95,6 +105,11 @@ export default function App(){
           servers: r.servers.map(s => {
             let m = generateMetrics()
             const ctrl = zoneControls[z.id] || { hvac:50, extractor:50 }
+            if(inventorySource === 'backend' && s.telemetrySource === 'backend'){
+              const current = s.metrics || m
+              const power = Number(Math.max(0, Math.min(100, m.power + (ctrl.hvac - 50) * 0.18 + (ctrl.extractor - 50) * 0.12)).toFixed(1))
+              return { ...s, metrics: { ...current, power } }
+            }
             // HVAC reduces temp when increased; extractor reduces humidity
             m.temp = Number(Math.max(0, Math.min(120, m.temp - (ctrl.hvac - 50) * 0.25)).toFixed(1))
             m.humidity = Number(Math.max(0, Math.min(100, m.humidity - (ctrl.extractor - 50) * 0.35)).toFixed(1))
@@ -107,7 +122,7 @@ export default function App(){
       })))
     }, 2000)
     return ()=>clearInterval(t)
-  }, [zoneControls])
+  }, [zoneControls, inventorySource])
 
   function updateZoneControls(zoneId, controls){
     setZoneControls(prev => ({ ...prev, [zoneId]: controls }))
@@ -123,6 +138,102 @@ export default function App(){
       setSelectedRack(null)
     }
   }, [selectedZone])
+
+  useEffect(()=>{
+    if(inventorySource !== 'backend' || !activeZone || !activeRack) return
+
+    let cancelled = false
+    const zoneCode = activeZone.code
+    const rackCode = activeRack.code
+
+    async function loadRackBackendData(){
+      let environmentTelemetry = null
+
+      try {
+        environmentTelemetry = await getEnvironmentTelemetry({
+          zone_code: zoneCode,
+          rack_code: rackCode,
+          limit: 50
+        })
+      } catch (error) {
+        console.warn('No se pudo cargar telemetria ambiental real; se mantienen datos simulados.', error)
+      }
+
+      const nodeTelemetryResults = await Promise.all(activeRack.servers.map(async server => {
+        try {
+          const nodeTelemetry = await getNodeTelemetry({
+            node_id: server.name,
+            zone_code: zoneCode,
+            rack_code: rackCode,
+            limit: 50
+          })
+
+          return { serverId: server.id, nodeTelemetry }
+        } catch (error) {
+          console.warn(`No se pudo cargar telemetria real para ${server.name}; se mantienen datos simulados.`, error)
+          return { serverId: server.id, nodeTelemetry: null }
+        }
+      }))
+
+      if(cancelled) return
+
+      setZones(prev => prev.map(zone => {
+        if(zone.id !== activeZone.id) return zone
+
+        return {
+          ...zone,
+          racks: zone.racks.map(rack => {
+            if(rack.id !== activeRack.id) return rack
+
+            return {
+              ...rack,
+              servers: rack.servers.map(server => {
+                const telemetryResult = nodeTelemetryResults.find(result => result.serverId === server.id)
+                const history = mapTelemetryToMetricsHistory({
+                  nodeTelemetry: telemetryResult?.nodeTelemetry,
+                  environmentTelemetry,
+                  fallbackMetrics: server.metrics
+                })
+
+                if(history.length === 0) return server
+
+                return {
+                  ...server,
+                  metrics: history[history.length - 1],
+                  metricsHistory: history.slice(-60),
+                  metricUnits: { ram: 'MB', net: 'Mbps' },
+                  telemetrySource: 'backend'
+                }
+              })
+            }
+          })
+        }
+      }))
+
+      try {
+        const auditCommands = await getAuditCommands({
+          zone_code: zoneCode,
+          rack_code: rackCode,
+          limit: 50
+        })
+
+        if(cancelled) return
+
+        const auditLogs = mapAuditCommandsToLogs(auditCommands)
+        if(auditLogs.length > 0){
+          setLogs(prev => [...auditLogs, ...prev].slice(0, 80))
+        }
+      } catch (error) {
+        console.warn('No se pudo cargar auditoria real; se mantienen logs locales.', error)
+      }
+    }
+
+    loadRackBackendData()
+
+    return ()=>{
+      cancelled = true
+    }
+  }, [inventorySource, activeZone?.id, activeRack?.id])
 
   // initialize logs with a startup message and generate timed logs based on metrics
   useEffect(()=>{
@@ -174,15 +285,15 @@ export default function App(){
         </aside>
         <main className="main">
           {!selectedZone && <div className="placeholder">Selecciona una zona para ver sus racks</div>}
-          {selectedZone && !selectedRack && (
-            <RackList zone={zones.find(z=>z.id===selectedZone.id)} onSelect={r=>setSelectedRack(r)} />
+          {activeZone && !activeRack && (
+            <RackList zone={activeZone} onSelect={r=>setSelectedRack(r)} />
           )}
-          {selectedRack && (
-            <RackDetail rack={selectedRack} onBack={()=>setSelectedRack(null)} />
+          {activeRack && (
+            <RackDetail rack={activeRack} onBack={()=>setSelectedRack(null)} />
           )}
         </main>
         <aside className="rightpanel">
-          <ZoneControls zone={selectedZone ? zones.find(z=>z.id===selectedZone.id) : null} controls={selectedZone ? (zoneControls[selectedZone.id]||{hvac:50,extractor:50}) : {}} onChange={updateZoneControls} />
+          <ZoneControls zone={activeZone} controls={activeZone ? (zoneControls[activeZone.id]||{hvac:50,extractor:50}) : {}} onChange={updateZoneControls} />
         </aside>
       </div>
       <footer className="footer">Mock datos aleatorios — Backend REST conexión futura</footer>
