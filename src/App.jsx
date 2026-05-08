@@ -4,6 +4,7 @@ import RackList from './components/RackList'
 import RackDetail from './components/RackDetail'
 import ZoneControls from './components/ZoneControls'
 import LogsPanel from './components/LogsPanel'
+import { getHealth } from './services/api'
 
 function rand(min, max) { return Math.round(Math.random() * (max - min) + min) }
 function randFloat(min, max, digits=1){ return Number((Math.random() * (max-min) + min).toFixed(digits)) }
@@ -47,6 +48,23 @@ export default function App(){
   const [selectedRack, setSelectedRack] = useState(null)
   const [zoneControls, setZoneControls] = useState(() => Object.fromEntries([0,1,2].map(i=>[`zone-${i}`, { hvac:50, extractor:50 }])) )
   const [logs, setLogs] = useState([])
+  const [backendStatus, setBackendStatus] = useState('checking')
+
+  useEffect(()=>{
+    let cancelled = false
+
+    getHealth()
+      .then(()=>{
+        if(!cancelled) setBackendStatus('connected')
+      })
+      .catch(()=>{
+        if(!cancelled) setBackendStatus('disconnected')
+      })
+
+    return ()=>{
+      cancelled = true
+    }
+  }, [])
 
   useEffect(()=>{
     const t = setInterval(()=>{
@@ -119,6 +137,10 @@ export default function App(){
     <div className="app-root">
       <header className="topbar">
         <h1>SEDCM — Monitor Datacenter</h1>
+        <div className={`backend-status backend-status-${backendStatus}`}>
+          <span className="backend-status-dot" aria-hidden="true" />
+          Backend: {backendStatus === 'connected' ? 'conectado' : backendStatus === 'disconnected' ? 'desconectado' : 'verificando'}
+        </div>
       </header>
       <div className="container">
         <aside className="sidebar">
