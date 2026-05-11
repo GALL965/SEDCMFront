@@ -162,6 +162,15 @@ export default function App(){
     pushLog(entry)
   }
 
+  function mergeUniqueLogs(entries){
+    entries.forEach(entry => {
+      pushUniqueLog(
+        { t: entry.t, level: entry.level, text: entry.text },
+        entry.logKey || `log:${entry.t}:${entry.text}`
+      )
+    })
+  }
+
   useEffect(()=>{
     if(selectedZone){
       setSelectedRack(null)
@@ -250,7 +259,7 @@ export default function App(){
 
         const auditLogs = mapAuditCommandsToLogs(auditCommands)
         if(auditLogs.length > 0){
-          setLogs(prev => [...auditLogs, ...prev].slice(0, 80))
+          mergeUniqueLogs(auditLogs)
         }
       } catch (error) {
         console.warn('No se pudo cargar auditoria real; se mantienen logs locales.', error)

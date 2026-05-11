@@ -25,7 +25,8 @@ export function mapAuditCommandsToLogs(auditCommands) {
     return {
       t: command.issued_at ? new Date(command.issued_at).getTime() : Date.now(),
       level: mapLevel(ackStatus),
-      text: `Comando ${command.action || 'desconocido'} para ${node} en ${rack}: ${reason}. ACK: ${ackStatus}`
+      text: `Comando ${command.action || 'desconocido'} para ${node} en ${rack}: ${reason}. ACK: ${ackStatus}`,
+      logKey: `audit:${command.command_id || command.id || `${rack}:${node}:${command.action || 'unknown'}`}`
     }
   })
 }
