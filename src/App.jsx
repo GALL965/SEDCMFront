@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import ZoneSelector from './components/ZoneSelector'
 import RackList from './components/RackList'
 import RackDetail from './components/RackDetail'
@@ -12,7 +12,8 @@ import {
   getNodeTelemetry
 } from './services/api'
 import { mapAuditCommandsToLogs } from './services/auditAdapter'
-import { mapInventoryToZones } from './services/inventoryAdapter'
+import { mapInventoryToZones, normalizeBackendStatus } from './services/inventoryAdapter'
+import { connectRealtime } from './services/realtime'
 import { mapTelemetryToMetricsHistory } from './services/telemetryAdapter'
 
 function rand(min, max) { return Math.round(Math.random() * (max - min) + min) }
@@ -51,6 +52,20 @@ function makeZone(i){
   return { id: `zone-${i}`, name: `Zona ${String.fromCharCode(65 + i)}`, racks, controls: { hvac: 50, extractor: 50 } }
 }
 
+function toRealtimeTimestamp(value){
+  const parsed = value ? new Date(value).getTime() : Date.now()
+  return Number.isFinite(parsed) ? parsed : Date.now()
+}
+
+function toMetricNumber(value, fallback = 0){
+  const parsed = Number(value)
+  return Number.isFinite(parsed) ? parsed : fallback
+}
+
+function bytesPerSecondToMbps(rx, tx){
+  return Number((((toMetricNumber(rx) + toMetricNumber(tx)) * 8) / 1000000).toFixed(2))
+}
+
 export default function App(){
   const [zones, setZones] = useState([0,1,2].map(makeZone))
   const [selectedZone, setSelectedZone] = useState(null)
@@ -59,8 +74,10 @@ export default function App(){
   const [logs, setLogs] = useState([])
   const [backendStatus, setBackendStatus] = useState('checking')
   const [inventorySource, setInventorySource] = useState('mock')
+  const [realtimeStatus, setRealtimeStatus] = useState('disconnected')
   const activeZone = selectedZone ? zones.find(z=>z.id===selectedZone.id) : null
   const activeRack = selectedRack && activeZone ? activeZone.racks.find(r=>r.id===selectedRack.id) : null
+  const recentLogKeysRef = useRef([])
 
   useEffect(()=>{
     let cancelled = false
@@ -131,6 +148,18 @@ export default function App(){
   // helper to push logs (keep last 80)
   function pushLog(entry){
     setLogs(prev => [entry, ...prev].slice(0,80))
+  }
+
+  function pushUniqueLog(entry, key){
+    if(!key){
+      pushLog(entry)
+      return
+    }
+
+    if(recentLogKeysRef.current.includes(key)) return
+
+    recentLogKeysRef.current = [key, ...recentLogKeysRef.current].slice(0, 40)
+    pushLog(entry)
   }
 
   useEffect(()=>{
@@ -235,6 +264,182 @@ export default function App(){
     }
   }, [inventorySource, activeZone?.id, activeRack?.id])
 
+  useEffect(()=>{
+    if(backendStatus !== 'connected' || inventorySource !== 'backend'){
+      setRealtimeStatus('disconnected')
+      return
+    }
+
+    setRealtimeStatus('connecting')
+
+    const connection = connectRealtime({
+      onOpen: ()=>{
+        setRealtimeStatus('connected')
+      },
+      onClose: ()=>{
+        setRealtimeStatus(current => current === 'disconnected' ? current : 'disconnected')
+      },
+      onError: ()=>{
+        setRealtimeStatus(current => current === 'connected' ? current : 'disconnected')
+      },
+      onEvent: event => {
+        const eventTime = toRealtimeTimestamp(event.timestamp)
+        const data = event.data || {}
+
+        if(event.type === 'telemetry_node_received'){
+          const metadata = data.metadata || {}
+          const metrics = data.metrics || {}
+
+          setZones(prev => prev.map(zone => {
+            if(zone.code !== metadata.dc_zone) return zone
+
+            return {
+              ...zone,
+              racks: zone.racks.map(rack => {
+                if(rack.code !== metadata.dc_rack) return rack
+
+                return {
+                  ...rack,
+                  servers: rack.servers.map(server => {
+                    if(server.name !== metadata.node_id) return server
+
+                    const nextMetrics = {
+                      ...server.metrics,
+                      t: eventTime,
+                      cpu: toMetricNumber(metrics.cpu_usage_pct, server.metrics.cpu),
+                      ram: toMetricNumber(metrics.ram_usage_mb, server.metrics.ram),
+                      net: bytesPerSecondToMbps(metrics.net_rx_bytes_sec, metrics.net_tx_bytes_sec)
+                    }
+
+                    return {
+                      ...server,
+                      metrics: nextMetrics,
+                      metricsHistory: [...(server.metricsHistory || []), nextMetrics].slice(-60),
+                      metricUnits: { ram: 'MB', net: 'Mbps' },
+                      telemetrySource: 'backend'
+                    }
+                  })
+                }
+              })
+            }
+          }))
+          return
+        }
+
+        if(event.type === 'telemetry_environment_received'){
+          const metadata = data.metadata || {}
+          const environment = data.environment || {}
+
+          setZones(prev => prev.map(zone => {
+            if(zone.code !== metadata.dc_zone) return zone
+
+            return {
+              ...zone,
+              racks: zone.racks.map(rack => {
+                if(rack.code !== metadata.dc_rack) return rack
+
+                return {
+                  ...rack,
+                  servers: rack.servers.map(server => {
+                    const nextMetrics = {
+                      ...server.metrics,
+                      t: eventTime,
+                      temp: toMetricNumber(environment.temperature_c, server.metrics.temp),
+                      humidity: toMetricNumber(environment.humidity_pct, server.metrics.humidity)
+                    }
+
+                    return {
+                      ...server,
+                      metrics: nextMetrics,
+                      metricsHistory: [...(server.metricsHistory || []), nextMetrics].slice(-60),
+                      telemetrySource: 'backend'
+                    }
+                  })
+                }
+              })
+            }
+          }))
+          return
+        }
+
+        if(event.type === 'node_status_changed'){
+          setZones(prev => prev.map(zone => {
+            if(zone.code !== data.zone_code) return zone
+
+            return {
+              ...zone,
+              racks: zone.racks.map(rack => {
+                if(rack.code !== data.rack_code) return rack
+
+                return {
+                  ...rack,
+                  servers: rack.servers.map(server => server.name === data.node_id
+                    ? { ...server, status: normalizeBackendStatus(data.new_status) }
+                    : server)
+                }
+              })
+            }
+          }))
+          return
+        }
+
+        if(event.type === 'rack_status_changed'){
+          setZones(prev => prev.map(zone => {
+            if(zone.code !== data.zone_code) return zone
+
+            return {
+              ...zone,
+              racks: zone.racks.map(rack => rack.code === data.rack_code
+                ? { ...rack, status: normalizeBackendStatus(data.new_status) }
+                : rack)
+            }
+          }))
+          return
+        }
+
+        if(event.type === 'command_published'){
+          pushUniqueLog(
+            {
+              t: eventTime,
+              level: 'info',
+              text: `Comando ${data.action || 'desconocido'} publicado para ${data.node_id || data.target_id || 'rack'} en ${data.rack_code || 'sin rack'}: ${data.reason || 'sin razon'}`
+            },
+            `command_published:${data.command_id || event.timestamp}`
+          )
+          return
+        }
+
+        if(event.type === 'command_ack_received'){
+          pushUniqueLog(
+            {
+              t: eventTime,
+              level: String(data.status || '').toUpperCase() === 'ACKED' ? 'info' : 'warn',
+              text: `ACK ${data.status || 'desconocido'} para comando ${data.command_id || 'sin id'} en ${data.rack_code || 'sin rack'}`
+            },
+            `command_ack_received:${data.command_id || event.timestamp}:${data.status || ''}`
+          )
+          return
+        }
+
+        if(event.type === 'escalation_event'){
+          pushUniqueLog(
+            {
+              t: eventTime,
+              level: data.stage === 'failed' ? 'critical' : 'warn',
+              text: `Escalacion ${data.stage || 'desconocida'} para ${data.node_id || 'nodo'} en ${data.rack_code || 'sin rack'}`
+            },
+            `escalation_event:${data.stage || 'unknown'}:${data.node_id || ''}:${event.timestamp}`
+          )
+        }
+      }
+    })
+
+    return ()=>{
+      setRealtimeStatus('disconnected')
+      connection.close()
+    }
+  }, [backendStatus, inventorySource])
+
   // initialize logs with a startup message and generate timed logs based on metrics
   useEffect(()=>{
     pushLog({ t: Date.now(), level: 'info', text: 'SEDCM frontend iniciado (datos simulados)' })
@@ -275,6 +480,9 @@ export default function App(){
           </div>
           <div className={`data-status data-status-${inventorySource}`}>
             Datos: {inventorySource === 'backend' ? 'backend' : 'mock'}
+          </div>
+          <div className={`realtime-status realtime-status-${realtimeStatus}`}>
+            Tiempo real: {realtimeStatus === 'connected' ? 'conectado' : realtimeStatus === 'connecting' ? 'conectando' : 'desconectado'}
           </div>
         </div>
       </header>

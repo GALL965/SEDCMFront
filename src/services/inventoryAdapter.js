@@ -5,7 +5,7 @@ const STATUS_MAP = {
   'Cr\u00edtico': 'critico'
 }
 
-function normalizeStatus(status) {
+export function normalizeBackendStatus(status) {
   return STATUS_MAP[status] || 'estable'
 }
 
@@ -17,7 +17,7 @@ function makeServerFromNode(node, rackCode, createMetrics) {
     id: `node-${rackCode}-${nodeId}`,
     name: nodeId,
     host: node.source_type || 'backend',
-    status: normalizeStatus(node.health_status),
+    status: normalizeBackendStatus(node.health_status),
     sourceType: node.source_type || null,
     firstSeenAt: node.first_seen_at || null,
     lastSeenAt: node.last_seen_at || null,
@@ -33,7 +33,7 @@ function makeRackFromBackend(rack, createMetrics) {
     id: `rack-${rackCode}`,
     name: `Rack ${rackCode}`,
     code: rackCode,
-    status: normalizeStatus(rack.environment_status),
+    status: normalizeBackendStatus(rack.environment_status),
     firstSeenAt: rack.first_seen_at || null,
     lastSeenAt: rack.last_seen_at || null,
     servers: (rack.nodes || []).map(node => makeServerFromNode(node, rackCode, createMetrics))
