@@ -162,6 +162,23 @@ export default function App(){
     pushLog(entry)
   }
 
+  useEffect(()=>{
+    if(backendStatus === 'connected' && inventorySource === 'backend'){
+      pushUniqueLog(
+        { t: Date.now(), level: 'info', text: 'SEDCM frontend conectado a backend' },
+        'startup:backend'
+      )
+      return
+    }
+
+    if(inventorySource === 'mock'){
+      pushUniqueLog(
+        { t: Date.now(), level: 'info', text: 'SEDCM frontend iniciado en modo mock' },
+        'startup:mock'
+      )
+    }
+  }, [backendStatus, inventorySource])
+
   function mergeUniqueLogs(entries){
     entries.forEach(entry => {
       pushUniqueLog(
@@ -449,10 +466,8 @@ export default function App(){
     }
   }, [backendStatus, inventorySource])
 
-  // initialize logs with a startup message and generate timed logs based on metrics
+  // generate timed logs based on metrics
   useEffect(()=>{
-    pushLog({ t: Date.now(), level: 'info', text: 'SEDCM frontend iniciado (datos simulados)' })
-
     const id = setInterval(()=>{
       // inspect metrics to generate warnings/criticals per zone
       zones.forEach(z=>{
@@ -513,7 +528,11 @@ export default function App(){
           <ZoneControls zone={activeZone} controls={activeZone ? (zoneControls[activeZone.id]||{hvac:50,extractor:50}) : {}} onChange={updateZoneControls} />
         </aside>
       </div>
-      <footer className="footer">Mock datos aleatorios — Backend REST conexión futura</footer>
+      <footer className="footer">
+        {inventorySource === 'backend'
+          ? 'Datos reales desde backend REST + WebSocket'
+          : 'Modo mock: datos simulados locales'}
+      </footer>
     </div>
   )
 }
