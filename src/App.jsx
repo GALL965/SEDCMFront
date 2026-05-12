@@ -17,6 +17,10 @@ import { mapInventoryToZones, normalizeBackendStatus } from './services/inventor
 import { connectRealtime } from './services/realtime'
 import { mapTelemetryToMetricsHistory } from './services/telemetryAdapter'
 
+const HVAC_COOLING_ACTIVE_MS = 45000
+const NODE_RESTART_ACTIVE_MS = 30000
+const NODE_SHUTDOWN_ACTIVE_MS = 45000
+
 function rand(min, max) { return Math.round(Math.random() * (max - min) + min) }
 function randFloat(min, max, digits=1){ return Number((Math.random() * (max-min) + min).toFixed(digits)) }
 
@@ -67,6 +71,14 @@ function bytesPerSecondToMbps(rx, tx){
   return Number((((toMetricNumber(rx) + toMetricNumber(tx)) * 8) / 1000000).toFixed(2))
 }
 
+function rackRuntimeKey(zoneCode, rackCode){
+  return `${zoneCode || 'zone'}:${rackCode || 'rack'}`
+}
+
+function nodeRuntimeKey(zoneCode, rackCode, nodeId){
+  return `${rackRuntimeKey(zoneCode, rackCode)}:${nodeId || 'node'}`
+}
+
 export default function App(){
   const [zones, setZones] = useState([0,1,2].map(makeZone))
   const [selectedZone, setSelectedZone] = useState(null)
@@ -76,10 +88,56 @@ export default function App(){
   const [backendStatus, setBackendStatus] = useState('checking')
   const [inventorySource, setInventorySource] = useState('mock')
   const [realtimeStatus, setRealtimeStatus] = useState('disconnected')
+  const [rackActuatorStates, setRackActuatorStates] = useState({})
+  const [nodeActionStates, setNodeActionStates] = useState({})
   const activeZone = selectedZone ? zones.find(z=>z.id===selectedZone.id) : null
   const activeRack = selectedRack && activeZone ? activeZone.racks.find(r=>r.id===selectedRack.id) : null
   const recentLogKeysRef = useRef([])
   const canSendManualCommands = backendStatus === 'connected' && inventorySource === 'backend'
+  const activeRackRuntimeKey = activeZone && activeRack ? rackRuntimeKey(activeZone.code, activeRack.code) : null
+  const activeRackActuatorState = activeRackRuntimeKey ? rackActuatorStates[activeRackRuntimeKey] || null : null
+  const activeRackCoolingActive = Boolean(activeRackActuatorState && activeRackActuatorState.coolingUntil > Date.now())
+  const activeRackHvacVisual = {
+    value: activeRackCoolingActive ? 85 : activeZone ? (zoneControls[activeZone.id]?.hvac ?? 50) : 50,
+    label: activeRackCoolingActive ? 'Cooling activo' : 'Uso actual',
+    active: activeRackCoolingActive
+  }
+  const activeNodeActionVisualState = activeZone && activeRack
+    ? Object.fromEntries(
+        activeRack.servers.map(server => [
+          server.name,
+          nodeActionStates[nodeRuntimeKey(activeZone.code, activeRack.code, server.name)] || null
+        ])
+      )
+    : {}
+
+  function activateRackCoolingVisual(zoneCode, rackCode, startedAt = Date.now()){
+    if(!zoneCode || !rackCode) return
+
+    setRackActuatorStates(prev => ({
+      ...prev,
+      [rackRuntimeKey(zoneCode, rackCode)]: {
+        mode: 'cooling',
+        coolingUntil: startedAt + HVAC_COOLING_ACTIVE_MS
+      }
+    }))
+  }
+
+  function activateNodeCommandVisual(zoneCode, rackCode, nodeId, action, startedAt = Date.now()){
+    if(!zoneCode || !rackCode || !nodeId) return
+
+    const isShutdown = action === 'hard_shutdown'
+
+    setNodeActionStates(prev => ({
+      ...prev,
+      [nodeRuntimeKey(zoneCode, rackCode, nodeId)]: {
+        action,
+        kind: isShutdown ? 'danger' : 'accent',
+        label: isShutdown ? 'Apagado solicitado' : 'Reinicio en curso',
+        expiresAt: startedAt + (isShutdown ? NODE_SHUTDOWN_ACTIVE_MS : NODE_RESTART_ACTIVE_MS)
+      }
+    }))
+  }
 
   useEffect(()=>{
     let cancelled = false
@@ -143,6 +201,30 @@ export default function App(){
     return ()=>clearInterval(t)
   }, [zoneControls, inventorySource])
 
+  useEffect(()=>{
+    const id = setInterval(()=>{
+      const now = Date.now()
+
+      setRackActuatorStates(prev => {
+        const next = Object.fromEntries(
+          Object.entries(prev).filter(([, value]) => value && value.coolingUntil > now)
+        )
+
+        return Object.keys(next).length === Object.keys(prev).length ? prev : next
+      })
+
+      setNodeActionStates(prev => {
+        const next = Object.fromEntries(
+          Object.entries(prev).filter(([, value]) => value && value.expiresAt > now)
+        )
+
+        return Object.keys(next).length === Object.keys(prev).length ? prev : next
+      })
+    }, 1000)
+
+    return ()=>clearInterval(id)
+  }, [])
+
   function updateZoneControls(zoneId, controls){
     setZoneControls(prev => ({ ...prev, [zoneId]: controls }))
   }
@@ -204,6 +286,7 @@ export default function App(){
 
     try {
       const response = await sendManualCommand(payload)
+      activateNodeCommandVisual(activeZone.code, activeRack.code, server.name, action)
 
       pushLog({
         t: Date.now(),
@@ -234,6 +317,7 @@ export default function App(){
 
     try {
       const response = await sendManualCommand(payload)
+      activateRackCoolingVisual(activeZone.code, activeRack.code)
 
       pushLog({
         t: Date.now(),
@@ -470,6 +554,17 @@ export default function App(){
             }
           }))
 
+          if(normalizedStatus === 'offline'){
+            setNodeActionStates(prev => {
+              const key = nodeRuntimeKey(data.zone_code, data.rack_code, data.node_id)
+              if(!prev[key]) return prev
+
+              const next = { ...prev }
+              delete next[key]
+              return next
+            })
+          }
+
           pushUniqueLog(
             {
               t: eventTime,
@@ -507,6 +602,14 @@ export default function App(){
         }
 
         if(event.type === 'command_published'){
+          if(data.action === 'set_hvac_mode' && data.mode === 'cooling' && data.target_type === 'rack'){
+            activateRackCoolingVisual(data.zone_code, data.rack_code || data.target_id, eventTime)
+          }
+
+          if((data.action === 'soft_reboot' || data.action === 'hard_shutdown') && (data.target_type === 'nodo' || data.target_type === 'node')){
+            activateNodeCommandVisual(data.zone_code, data.rack_code, data.node_id || data.target_id, data.action, eventTime)
+          }
+
           pushUniqueLog(
             {
               t: eventTime,
@@ -610,6 +713,7 @@ export default function App(){
               onBack={()=>setSelectedRack(null)}
               canSendManualCommands={canSendManualCommands}
               onSendNodeCommand={handleNodeManualCommand}
+              nodeActionStates={activeNodeActionVisualState}
             />
           )}
         </main>
@@ -621,6 +725,7 @@ export default function App(){
             onChange={updateZoneControls}
             canSendManualCommands={canSendManualCommands}
             onApplyCooling={handleCoolingCommand}
+            hvacVisual={activeRackHvacVisual}
           />
         </aside>
       </div>

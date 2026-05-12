@@ -8,7 +8,8 @@ export default function ZoneControls({
   onChange,
   activeRack = null,
   canSendManualCommands = false,
-  onApplyCooling
+  onApplyCooling,
+  hvacVisual = null
 }){
   if(!zone) return (
     <div className="zone-controls empty">Selecciona una zona</div>
@@ -21,12 +22,19 @@ export default function ZoneControls({
     <div className="zone-controls">
       <h3>{zone.name} - Controles</h3>
       <div className="controls-stack">
-        <HVACControl value={controls.hvac} onChange={handleHVAC} />
-        <div className="manual-control-card">
+        <HVACControl
+          value={hvacVisual?.value ?? controls.hvac}
+          onChange={handleHVAC}
+          statusText={hvacVisual?.label ?? 'Uso actual'}
+          active={Boolean(hvacVisual?.active)}
+        />
+        <div className={`manual-control-card ${hvacVisual?.active ? 'manual-control-card-active' : ''}`}>
           <div className="manual-control-copy">
             <div className="manual-control-title">HVAC manual</div>
             <div className="manual-control-subtitle">
-              {activeRack
+              {hvacVisual?.active
+                ? `Cooling activo en ${activeRack?.name || 'rack seleccionado'}`
+                : activeRack
                 ? `Aplicar cooling a ${activeRack.name}`
                 : 'Selecciona un rack para enviar cooling'}
             </div>

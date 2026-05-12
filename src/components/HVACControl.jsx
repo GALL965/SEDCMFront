@@ -1,6 +1,12 @@
 import React, { useEffect, useState } from 'react'
 
-export default function HVACControl({ value, simulate = true, simInterval = 2000 }){
+export default function HVACControl({
+  value,
+  simulate = true,
+  simInterval = 2000,
+  statusText = 'Uso actual',
+  active = false
+}){
   // If a `value` prop is provided, display it (useful when backend is connected).
   // Otherwise simulate an internal value so the UI shows realistic numbers.
   const [internal, setInternal] = useState(typeof value === 'number' ? value : 50)
@@ -27,11 +33,13 @@ export default function HVACControl({ value, simulate = true, simInterval = 2000
       <div className="ctrl-title">HVAC</div>
       <div className="ctrl-row" style={{flexDirection:'column',alignItems:'stretch',gap:8}}>
         <div className="hvac-bar">
-          <div className="hvac-fill" style={{width:`${current}%`}} />
+          <div className={`hvac-fill ${active ? 'hvac-fill-active' : ''}`} style={{width:`${current}%`}} />
         </div>
         <div style={{display:'flex',justifyContent:'space-between',alignItems:'center'}}>
           <div className="ctrl-value">{current}%</div>
-          <div className="label" style={{fontSize:12,color:'var(--muted)'}}>Uso actual</div>
+          <div className={`label ctrl-status-text ${active ? 'ctrl-status-text-active' : ''}`} style={{fontSize:12}}>
+            {statusText}
+          </div>
         </div>
       </div>
     </div>

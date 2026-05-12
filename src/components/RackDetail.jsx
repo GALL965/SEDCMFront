@@ -26,7 +26,8 @@ export default function RackDetail({
   rack,
   onBack,
   canSendManualCommands = false,
-  onSendNodeCommand
+  onSendNodeCommand,
+  nodeActionStates = {}
 }){
   const [metric, setMetric] = useState('cpu')
   const [expandedServer, setExpandedServer] = useState(null)
@@ -51,6 +52,7 @@ export default function RackDetail({
       <div className="servers-grid">
         {rack.servers.map(s=> {
           const isOffline = s.status === 'offline'
+          const nodeActionState = nodeActionStates[s.name] || null
 
           return (
             <div key={s.id} className={`server-card ${isOffline ? 'server-card-offline' : ''}`}>
@@ -64,6 +66,11 @@ export default function RackDetail({
                   </div>
                   <div className="server-host">{s.host}</div>
                   {isOffline && <div className="server-offline-note">Sin telemetria reciente</div>}
+                  {!isOffline && nodeActionState?.label && (
+                    <div className={`server-action-note server-action-note-${nodeActionState.kind || 'info'}`}>
+                      {nodeActionState.label}
+                    </div>
+                  )}
                 </div>
                 <div className="server-actions">
                   <button
