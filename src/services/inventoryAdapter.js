@@ -2,7 +2,8 @@ const STATUS_MAP = {
   Normal: 'estable',
   Warning: 'peligro',
   Critico: 'critico',
-  'Cr\u00edtico': 'critico'
+  'Cr\u00edtico': 'critico',
+  OFFLINE: 'offline'
 }
 
 export function normalizeBackendStatus(status) {

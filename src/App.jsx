@@ -450,6 +450,8 @@ export default function App(){
         }
 
         if(event.type === 'node_status_changed'){
+          const normalizedStatus = normalizeBackendStatus(data.new_status)
+
           setZones(prev => prev.map(zone => {
             if(zone.code !== data.zone_code) return zone
 
@@ -461,26 +463,46 @@ export default function App(){
                 return {
                   ...rack,
                   servers: rack.servers.map(server => server.name === data.node_id
-                    ? { ...server, status: normalizeBackendStatus(data.new_status) }
+                    ? { ...server, status: normalizedStatus }
                     : server)
                 }
               })
             }
           }))
+
+          pushUniqueLog(
+            {
+              t: eventTime,
+              level: normalizedStatus === 'offline' ? 'warn' : 'info',
+              text: `Nodo ${data.node_id || 'sin id'} cambio a ${data.new_status || 'desconocido'}`
+            },
+            `node_status_changed:${data.node_id || ''}:${data.new_status || ''}:${event.timestamp}`
+          )
           return
         }
 
         if(event.type === 'rack_status_changed'){
+          const normalizedStatus = normalizeBackendStatus(data.new_status)
+
           setZones(prev => prev.map(zone => {
             if(zone.code !== data.zone_code) return zone
 
             return {
               ...zone,
               racks: zone.racks.map(rack => rack.code === data.rack_code
-                ? { ...rack, status: normalizeBackendStatus(data.new_status) }
+                ? { ...rack, status: normalizedStatus }
                 : rack)
             }
           }))
+
+          pushUniqueLog(
+            {
+              t: eventTime,
+              level: normalizedStatus === 'offline' ? 'warn' : 'info',
+              text: `Rack ${data.rack_code || 'sin rack'} cambio a ${data.new_status || 'desconocido'}`
+            },
+            `rack_status_changed:${data.rack_code || ''}:${data.new_status || ''}:${event.timestamp}`
+          )
           return
         }
 
@@ -534,6 +556,7 @@ export default function App(){
       zones.forEach(z=>{
         z.racks.forEach(r=>{
           r.servers.forEach(s=>{
+            if(s.status === 'offline') return
             const m = s.metrics
             if(m.temp > 85 || m.humidity > 90 || m.power > 95){
               pushLog({ t: Date.now(), level: 'critical', text: `CRÍTICO: ${s.name} en ${z.name} presenta valores críticos (T:${m.temp}°C H:${m.humidity}% P:${m.power}%)` })
