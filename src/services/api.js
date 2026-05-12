@@ -39,8 +39,8 @@ export async function fetchJson(path, options = {}) {
     : await response.text().catch(() => '')
 
   if (!response.ok) {
-    const message = body && typeof body === 'object' && body.message
-      ? body.message
+    const message = body && typeof body === 'object'
+      ? body.message || body.detail || body.error || `Respuesta no OK del backend: ${response.status}`
       : `Respuesta no OK del backend: ${response.status}`
 
     throw new Error(message)
@@ -67,4 +67,14 @@ export function getEnvironmentTelemetry(params = {}) {
 
 export function getAuditCommands(params = {}) {
   return fetchJson(`/api/v1/audit/commands${buildQuery({ limit: 50, ...params })}`)
+}
+
+export function sendManualCommand(payload) {
+  return fetchJson('/api/v1/commands', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json'
+    },
+    body: JSON.stringify(payload)
+  })
 }

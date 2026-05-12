@@ -16,7 +16,12 @@ function formatRam(server){
   return `${server.metrics.ram}${unit}`
 }
 
-export default function RackDetail({ rack, onBack }){
+export default function RackDetail({
+  rack,
+  onBack,
+  canSendManualCommands = false,
+  onSendNodeCommand
+}){
   const [metric, setMetric] = useState('cpu');
   const [expandedServer, setExpandedServer] = useState(null);
 
@@ -44,6 +49,22 @@ export default function RackDetail({ rack, onBack }){
                 <div className="server-host">{s.host}</div>
               </div>
               <div className="server-actions">
+                <button
+                  className="manual-btn"
+                  onClick={()=>onSendNodeCommand && onSendNodeCommand(s, 'soft_reboot')}
+                  disabled={!canSendManualCommands}
+                  title={canSendManualCommands ? 'Enviar soft_reboot al nodo' : 'Disponible solo con backend real conectado'}
+                >
+                  Reiniciar
+                </button>
+                <button
+                  className="manual-btn manual-btn-danger"
+                  onClick={()=>onSendNodeCommand && onSendNodeCommand(s, 'hard_shutdown')}
+                  disabled={!canSendManualCommands}
+                  title={canSendManualCommands ? 'Enviar hard_shutdown al nodo' : 'Disponible solo con backend real conectado'}
+                >
+                  Apagar
+                </button>
                 <button className="history-btn" onClick={()=>{ setExpandedServer(s.id); setMetric('cpu') }}>
                   Ver historial
                 </button>

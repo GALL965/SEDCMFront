@@ -9,7 +9,8 @@ import {
   getEnvironmentTelemetry,
   getHealth,
   getInventory,
-  getNodeTelemetry
+  getNodeTelemetry,
+  sendManualCommand
 } from './services/api'
 import { mapAuditCommandsToLogs } from './services/auditAdapter'
 import { mapInventoryToZones, normalizeBackendStatus } from './services/inventoryAdapter'
@@ -78,6 +79,7 @@ export default function App(){
   const activeZone = selectedZone ? zones.find(z=>z.id===selectedZone.id) : null
   const activeRack = selectedRack && activeZone ? activeZone.racks.find(r=>r.id===selectedRack.id) : null
   const recentLogKeysRef = useRef([])
+  const canSendManualCommands = backendStatus === 'connected' && inventorySource === 'backend'
 
   useEffect(()=>{
     let cancelled = false
@@ -186,6 +188,65 @@ export default function App(){
         entry.logKey || `log:${entry.t}:${entry.text}`
       )
     })
+  }
+
+  async function handleNodeManualCommand(server, action){
+    if(!canSendManualCommands || !activeZone || !activeRack) return
+
+    const payload = {
+      zone_code: activeZone.code,
+      rack_code: activeRack.code,
+      target_type: 'nodo',
+      target_id: server.name,
+      action,
+      reason: 'Manual operator action'
+    }
+
+    try {
+      const response = await sendManualCommand(payload)
+
+      pushLog({
+        t: Date.now(),
+        level: 'info',
+        text: `Comando manual enviado: ${action} para ${server.name} (${response.ack_status || 'PENDING'})`
+      })
+    } catch (error) {
+      pushLog({
+        t: Date.now(),
+        level: 'critical',
+        text: `Error enviando comando manual para ${server.name}: ${error.message || 'sin detalle'}`
+      })
+    }
+  }
+
+  async function handleCoolingCommand(){
+    if(!canSendManualCommands || !activeZone || !activeRack) return
+
+    const payload = {
+      zone_code: activeZone.code,
+      rack_code: activeRack.code,
+      target_type: 'rack',
+      target_id: activeRack.code,
+      action: 'set_hvac_mode',
+      mode: 'cooling',
+      reason: 'Manual HVAC cooling'
+    }
+
+    try {
+      const response = await sendManualCommand(payload)
+
+      pushLog({
+        t: Date.now(),
+        level: 'info',
+        text: `Comando manual enviado: set_hvac_mode cooling para ${activeRack.name} (${response.ack_status || 'PENDING'})`
+      })
+    } catch (error) {
+      pushLog({
+        t: Date.now(),
+        level: 'critical',
+        text: `Error enviando comando manual HVAC: ${error.message || 'sin detalle'}`
+      })
+    }
   }
 
   useEffect(()=>{
@@ -521,11 +582,23 @@ export default function App(){
             <RackList zone={activeZone} onSelect={r=>setSelectedRack(r)} />
           )}
           {activeRack && (
-            <RackDetail rack={activeRack} onBack={()=>setSelectedRack(null)} />
+            <RackDetail
+              rack={activeRack}
+              onBack={()=>setSelectedRack(null)}
+              canSendManualCommands={canSendManualCommands}
+              onSendNodeCommand={handleNodeManualCommand}
+            />
           )}
         </main>
         <aside className="rightpanel">
-          <ZoneControls zone={activeZone} controls={activeZone ? (zoneControls[activeZone.id]||{hvac:50,extractor:50}) : {}} onChange={updateZoneControls} />
+          <ZoneControls
+            zone={activeZone}
+            activeRack={activeRack}
+            controls={activeZone ? (zoneControls[activeZone.id]||{hvac:50,extractor:50}) : {}}
+            onChange={updateZoneControls}
+            canSendManualCommands={canSendManualCommands}
+            onApplyCooling={handleCoolingCommand}
+          />
         </aside>
       </div>
       <footer className="footer">
