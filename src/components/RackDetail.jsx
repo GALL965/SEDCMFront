@@ -1,4 +1,4 @@
-import React, { useState } from 'react'
+import React, { useEffect, useRef, useState } from 'react'
 import LineChart from './LineChart'
 
 const METRICS = [
@@ -31,10 +31,17 @@ export default function RackDetail({
 }){
   const [metric, setMetric] = useState('cpu')
   const [expandedServer, setExpandedServer] = useState(null)
+  const expandedPanelRef = useRef(null)
 
-  React.useEffect(()=>{
-    setExpandedServer(rack && rack.servers && rack.servers[0] ? rack.servers[0].id : null)
+  useEffect(()=>{
+    setExpandedServer(null)
   }, [rack])
+
+  useEffect(()=>{
+    if(!expandedServer || !expandedPanelRef.current) return
+
+    expandedPanelRef.current.scrollIntoView({ behavior: 'smooth', block: 'start' })
+  }, [expandedServer])
 
   return (
     <div className="rack-detail">
@@ -89,7 +96,13 @@ export default function RackDetail({
                   >
                     Apagar
                   </button>
-                  <button className="history-btn" onClick={()=>{ setExpandedServer(s.id); setMetric('cpu') }}>
+                  <button
+                    className="history-btn"
+                    onClick={()=>{
+                      setExpandedServer(s.id)
+                      setMetric('cpu')
+                    }}
+                  >
                     Ver historial
                   </button>
                 </div>
@@ -112,12 +125,20 @@ export default function RackDetail({
         if(!srv) return null
         const history = srv.metricsHistory || []
         const data = history.map(h=>({ t: h.t, v: h[metric] }))
+        const hasHistoricalData = history.length > 1
+        const isOffline = srv.status === 'offline'
+
         return (
-          <div className="expanded-panel">
+          <div className="expanded-panel" ref={expandedPanelRef}>
             <div className="expanded-header">
               <div>
                 <div className="expanded-title">{srv.name} - Historial expandido</div>
                 <div className="expanded-sub">{srv.host}</div>
+                {isOffline && (
+                  <div className="expanded-note expanded-note-offline">
+                    Nodo offline: mostrando ultimo historial disponible
+                  </div>
+                )}
               </div>
               <div className="expanded-actions">
                 <div className="metric-selector">
@@ -129,7 +150,13 @@ export default function RackDetail({
               </div>
             </div>
             <div className="expanded-chart-wrap">
-              <LineChart data={data} metric={metric} width={980} height={300} />
+              {hasHistoricalData ? (
+                <LineChart data={data} metric={metric} width={980} height={300} />
+              ) : (
+                <div className="no-history-message">
+                  Sin datos historicos disponibles para este nodo
+                </div>
+              )}
             </div>
           </div>
         )
