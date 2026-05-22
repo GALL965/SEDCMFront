@@ -1,26 +1,20 @@
 import React from 'react'
-
-function rackStatus(rack){
-  if(rack.status) return rack.status
-  if(!rack.servers.length) return 'estable'
-
-  const avgTemp = rack.servers.reduce((s,x)=>s+x.metrics.temp,0)/rack.servers.length
-  const avgPower = rack.servers.reduce((s,x)=>s+x.metrics.power,0)/rack.servers.length
-  if(avgTemp>80 || avgPower>90) return 'critico'
-  if(avgTemp>60 || avgPower>75) return 'peligro'
-  return 'estable'
-}
+import {
+  getAggregatedRackStatus,
+  getRackEnvironmentStatus,
+  getWorstNodeStatus
+} from '../services/inventoryAdapter'
 
 function averageMetric(rack, key){
   if(!rack.servers.length) return '0.0'
-  return (rack.servers.reduce((sum, server)=>sum+server.metrics[key],0)/rack.servers.length).toFixed(1)
+  return (rack.servers.reduce((sum, server)=>sum + server.metrics[key], 0) / rack.servers.length).toFixed(1)
 }
 
 function statusLabel(status){
   if(status === 'offline') return 'OFFLINE'
-  if(status === 'critico') return 'critico'
-  if(status === 'peligro') return 'peligro'
-  return 'estable'
+  if(status === 'critico') return 'CRITICO'
+  if(status === 'peligro') return 'PELIGRO'
+  return 'NORMAL'
 }
 
 export default function RackList({ zone, onSelect }){
@@ -28,41 +22,55 @@ export default function RackList({ zone, onSelect }){
     <div className="rack-list">
       <h2>{zone.name} - Racks</h2>
       <div className="racks-grid">
-        {zone.racks.map(r=>{
-          const status = rackStatus(r)
-          const colorClass = `status-${status}`
-          const isOffline = status === 'offline'
-          const avgTemp = averageMetric(r, 'temp')
-          const avgHum = averageMetric(r, 'humidity')
-          const avgPower = averageMetric(r, 'power')
+        {zone.racks.map(rack => {
+          const aggregatedStatus = getAggregatedRackStatus(rack)
+          const environmentStatus = getRackEnvironmentStatus(rack)
+          const worstNodeStatus = getWorstNodeStatus(rack)
+          const environmentOffline = environmentStatus === 'offline'
 
           return (
             <div
-              key={r.id}
-              className={`rack-card ${isOffline ? 'rack-card-offline' : ''}`}
-              onClick={()=>onSelect(r)}
+              key={rack.id}
+              className={`rack-card ${aggregatedStatus === 'offline' ? 'rack-card-offline' : ''}`}
+              onClick={()=>onSelect(rack)}
             >
               <div className="rack-header">
-                <div className={`status-dot ${colorClass}`}></div>
+                <div className={`status-dot status-${aggregatedStatus}`}></div>
                 <div className="rack-title-group">
-                  <div className="rack-name">{r.name}</div>
-                  <div className={`status-badge ${colorClass}`}>
-                    {statusLabel(status)}
+                  <div className="rack-name">{rack.name}</div>
+                  <div className={`status-badge status-${aggregatedStatus}`}>
+                    {statusLabel(aggregatedStatus)}
                   </div>
                 </div>
               </div>
+
+              <div className="rack-status-summary">
+                <div className="rack-status-line">
+                  <span className="label">Ambiente</span>
+                  <strong className={`summary-status summary-status-${environmentStatus}`}>
+                    {statusLabel(environmentStatus)}
+                  </strong>
+                </div>
+                <div className="rack-status-line">
+                  <span className="label">Nodos</span>
+                  <strong className={`summary-status summary-status-${worstNodeStatus}`}>
+                    {statusLabel(worstNodeStatus)}
+                  </strong>
+                </div>
+              </div>
+
               <div className="rack-metrics">
                 <div>
-                  <span className="label">{isOffline ? 'Estado' : 'Temp'}</span>
-                  <strong>{isOffline ? 'Sin telemetria' : `${avgTemp}°C`}</strong>
+                  <span className="label">Temp</span>
+                  <strong>{environmentOffline ? 'Sin telemetria' : `${averageMetric(rack, 'temp')}°C`}</strong>
                 </div>
                 <div>
-                  <span className="label">{isOffline ? 'Ultimo dato' : 'Humedad'}</span>
-                  <strong>{isOffline ? 'Sin conexion' : `${avgHum}%`}</strong>
+                  <span className="label">Humedad</span>
+                  <strong>{environmentOffline ? 'Sin telemetria' : `${averageMetric(rack, 'humidity')}%`}</strong>
                 </div>
                 <div>
-                  <span className="label">{isOffline ? 'Rack' : 'Potencia'}</span>
-                  <strong>{isOffline ? 'OFFLINE' : `${avgPower}%`}</strong>
+                  <span className="label">Potencia</span>
+                  <strong>{environmentOffline ? 'Sin telemetria' : `${averageMetric(rack, 'power')}%`}</strong>
                 </div>
               </div>
             </div>

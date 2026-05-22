@@ -3,11 +3,59 @@ const STATUS_MAP = {
   Warning: 'peligro',
   Critico: 'critico',
   'Cr\u00edtico': 'critico',
-  OFFLINE: 'offline'
+  OFFLINE: 'offline',
+  estable: 'estable',
+  peligro: 'peligro',
+  critico: 'critico',
+  offline: 'offline'
+}
+
+const STATUS_PRIORITY = {
+  offline: 4,
+  critico: 3,
+  peligro: 2,
+  estable: 1
 }
 
 export function normalizeBackendStatus(status) {
   return STATUS_MAP[status] || 'estable'
+}
+
+export const normalizeStatus = normalizeBackendStatus
+
+export function getRackEnvironmentStatus(rack) {
+  return normalizeBackendStatus(rack?.environmentStatus || rack?.status)
+}
+
+export function getWorstNodeStatus(rack) {
+  const statuses = (rack?.servers || []).map(server => normalizeBackendStatus(server?.status))
+
+  let strongest = 'estable'
+
+  for (const status of statuses) {
+    if ((STATUS_PRIORITY[status] || 0) > (STATUS_PRIORITY[strongest] || 0)) {
+      strongest = status
+    }
+  }
+
+  return strongest
+}
+
+export function getAggregatedRackStatus(rack) {
+  const statuses = [
+    getRackEnvironmentStatus(rack),
+    getWorstNodeStatus(rack)
+  ]
+
+  let strongest = 'estable'
+
+  for (const status of statuses) {
+    if ((STATUS_PRIORITY[status] || 0) > (STATUS_PRIORITY[strongest] || 0)) {
+      strongest = status
+    }
+  }
+
+  return strongest
 }
 
 function makeServerFromNode(node, rackCode, createMetrics) {
@@ -35,6 +83,7 @@ function makeRackFromBackend(rack, createMetrics) {
     name: `Rack ${rackCode}`,
     code: rackCode,
     status: normalizeBackendStatus(rack.environment_status),
+    environmentStatus: normalizeBackendStatus(rack.environment_status),
     firstSeenAt: rack.first_seen_at || null,
     lastSeenAt: rack.last_seen_at || null,
     servers: (rack.nodes || []).map(node => makeServerFromNode(node, rackCode, createMetrics))

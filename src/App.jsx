@@ -13,7 +13,7 @@ import {
   sendManualCommand
 } from './services/api'
 import { mapAuditCommandsToLogs } from './services/auditAdapter'
-import { mapInventoryToZones, normalizeBackendStatus } from './services/inventoryAdapter'
+import { getAggregatedRackStatus, mapInventoryToZones, normalizeBackendStatus } from './services/inventoryAdapter'
 import { connectRealtime } from './services/realtime'
 import { mapTelemetryToMetricsHistory } from './services/telemetryAdapter'
 
@@ -77,6 +77,13 @@ function rackRuntimeKey(zoneCode, rackCode){
 
 function nodeRuntimeKey(zoneCode, rackCode, nodeId){
   return `${rackRuntimeKey(zoneCode, rackCode)}:${nodeId || 'node'}`
+}
+
+function withAggregatedRackStatus(rack){
+  return {
+    ...rack,
+    status: getAggregatedRackStatus(rack)
+  }
 }
 
 export default function App(){
@@ -542,14 +549,14 @@ export default function App(){
             return {
               ...zone,
               racks: zone.racks.map(rack => {
-                if(rack.code !== data.rack_code) return rack
+                if(rack.code !== data.rack_code) return withAggregatedRackStatus(rack)
 
-                return {
+                return withAggregatedRackStatus({
                   ...rack,
                   servers: rack.servers.map(server => server.name === data.node_id
                     ? { ...server, status: normalizedStatus }
                     : server)
-                }
+                })
               })
             }
           }))
@@ -585,8 +592,11 @@ export default function App(){
             return {
               ...zone,
               racks: zone.racks.map(rack => rack.code === data.rack_code
-                ? { ...rack, status: normalizedStatus }
-                : rack)
+                ? withAggregatedRackStatus({
+                    ...rack,
+                    environmentStatus: normalizedStatus
+                  })
+                : withAggregatedRackStatus(rack))
             }
           }))
 
@@ -709,6 +719,7 @@ export default function App(){
           )}
           {activeRack && (
             <RackDetail
+              zoneCode={activeZone?.code || activeZone?.id}
               rack={activeRack}
               onBack={()=>setSelectedRack(null)}
               canSendManualCommands={canSendManualCommands}
